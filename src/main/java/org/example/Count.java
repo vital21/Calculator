@@ -21,7 +21,7 @@ public class Count {
         List<Lexeme> lexemes = new ArrayList<>();
         lexemes=stringRedact();
         LexemeBuffer leksbuf=new LexemeBuffer(lexemes);
-        double result=expr(leksbuf);
+        result=evaluateExpression(leksbuf);
         return result;
     }
     public static List<Lexeme> stringRedact(){
@@ -114,109 +114,205 @@ public class Count {
         public int getPos() {
             return pos;
         }
-    }
-    public static double expr(LexemeBuffer lexemes) {
-        Lexeme lexeme = lexemes.next();
-        if (lexeme.type == LexemeType.EOF) {
-            return 0;
-        } else {
-            lexemes.back();
-            return plusminus(lexemes);
+        public boolean hasNext() {
+            return pos < lexemes.size();
         }
     }
-    public static double plusminus(LexemeBuffer lexemes) {
-        double value = multdiv(lexemes);
-        while (true) {
-            Lexeme lexeme = lexemes.next();
-            switch (lexeme.type) {
-                case OP_PLUS:
-                    value += multdiv(lexemes);
-                    break;
-                case OP_MINUS:
-                    value -= multdiv(lexemes);
-                    break;
-                case EOF:
-                case RIGHT_BRACKET:
-                    lexemes.back();
-                    return value;
-                default:
-                    throw new RuntimeException("Unexpected token: " + lexeme.value
-                            + " at position: " + lexemes.getPos());
-            }
-        }
-    }
-    public static double multdiv(LexemeBuffer lexemes) {
-        double value = factor(lexemes);
 
-        while (true) {
-            Lexeme lexeme = lexemes.next();
+
+
+    private static double evaluateAddSub(LexemeBuffer buffer) {
+        double value = evaluateMulDiv(buffer);
+        while (buffer.hasNext()) {
+            Lexeme lexeme = buffer.next();
             switch (lexeme.type) {
-                case OP_MUL:
-                    value *= toVal(lexemes);
-                    break;
-                case OP_DIV:
-                    value /= toVal(lexemes);
-                    break;
-                case EOF:
-                case RIGHT_BRACKET:
                 case OP_PLUS:
+                    value += evaluateMulDiv(buffer);
+                    break;
                 case OP_MINUS:
-                    lexemes.back();
-                    return value;
-                default:
-                    throw new RuntimeException("Unexpected token: " + lexeme.value
-                            + " at position: " + lexemes.getPos());
-            }
-        }
-    }
-    public static double toVal(LexemeBuffer lexemes) {
-        double value = factor(lexemes);
-        double dollars=0.5;
-        double ruble=0.2;
-        while (true) {
-            Lexeme lexeme = lexemes.next();
-            switch (lexeme.type) {
+                    value -= evaluateMulDiv(buffer);
+                    break;
                 case OP_DOLLARS:
-                    dollars*=factor(lexemes);
+                    value = toDollars(value);
+                    break;
                 case OP_RUBLE:
-                    ruble*=factor(lexemes);
-                case OP_MUL:
-                case OP_DIV:
-                case EOF:
+                    value = toRubles(value);
+                    break;
                 case RIGHT_BRACKET:
-                case OP_PLUS:
-                case OP_MINUS:
-                    lexemes.back();
+                    buffer.back();
+                    return value;
+                case EOF:
                     return value;
                 default:
-                    throw new RuntimeException("Unexpected token: " + lexeme.value
-                            + " at position: " + lexemes.getPos());
+                    throw new RuntimeException("Неверный формат выражения");
             }
         }
+        return value;
     }
 
-    public static double factor(LexemeBuffer lexemes) {
-        Lexeme lexeme = lexemes.next();
-        double value=0;
-        switch (lexeme.type) {
-            case OP_RUBLE:
-                value =toVal(lexemes);
-            case OP_DOLLARS:
-                value =toVal(lexemes);
-            case NUMBER:
-                return Double.parseDouble(lexeme.value);
-            case LEFT_BRACKET:
-                 value = plusminus(lexemes);
-                lexeme = lexemes.next();
-                if (lexeme.type != LexemeType.RIGHT_BRACKET) {
-                    throw new RuntimeException("Unexpected token: " + lexeme.value
-                            + " at position: " + lexemes.getPos());
-                }
-                return value;
-            default:
-                throw new RuntimeException("Unexpected token: " + lexeme.value
-                        + " at position: " + lexemes.getPos());
+
+    private static double evaluateFactor(LexemeBuffer buffer) {
+        if (buffer.hasNext()) {
+            Lexeme lexeme = buffer.next();
+            switch (lexeme.type) {
+                case NUMBER:
+                    return Double.parseDouble(lexeme.value);
+                case OP_PLUS:
+                    return evaluateFactor(buffer);
+                case OP_MINUS:
+                    return -evaluateFactor(buffer);
+                case OP_RUBLE:
+                    if (buffer.hasNext() && buffer.next().type == LexemeType.LEFT_BRACKET) {
+                        double dollars = evaluateExpression(buffer);
+                        if (buffer.hasNext() && buffer.next().type == LexemeType.RIGHT_BRACKET) {
+                            return toRubles(dollars);
+                        }
+                        throw new RuntimeException("Неправильный формат выражения");
+                    }
+                    throw new RuntimeException("Неправильный формат выражения");
+                case OP_DOLLARS:
+                    if (buffer.hasNext() && buffer.next().type == LexemeType.LEFT_BRACKET) {
+                        double rubles = evaluateExpression(buffer);
+                        if (buffer.hasNext() && buffer.next().type == LexemeType.RIGHT_BRACKET) {
+                            return toDollars(rubles);
+                        }
+                        throw new RuntimeException("Неправильный формат выражения");
+                    }
+                    throw new RuntimeException("Неправильный формат выражения");
+                case LEFT_BRACKET:
+                    double result = evaluateExpression(buffer);
+                    if (buffer.hasNext() && buffer.next().type == LexemeType.RIGHT_BRACKET) {
+                        return result;
+                    }
+                    throw new RuntimeException("Неправильный формат выражения");
+                default:
+                    throw new RuntimeException("Неправильный формат выражения");
+            }
         }
+        throw new RuntimeException("Неправильный формат выражения");
     }
+    private static double evaluateMulDiv(LexemeBuffer buffer) {
+        double left = evaluateUnary(buffer);
+
+        while (buffer.hasNext()) {
+            Lexeme lexeme = buffer.next();
+            switch (lexeme.type) {
+                case OP_MUL:
+                    left *= evaluateUnary(buffer);
+                    break;
+                case OP_DIV:
+                    left /= evaluateUnary(buffer);
+                    break;
+                case OP_DOLLARS:
+                    if (!buffer.hasNext()) {
+                        throw new RuntimeException("Неверный формат выражения");
+                    }
+                    Lexeme dollarValue = buffer.next();
+                    if (dollarValue.type != LexemeType.NUMBER) {
+                        throw new RuntimeException("Неверный формат выражения");
+                    }
+                    left *= toRubles(Double.parseDouble(dollarValue.value));
+                    break;
+                case OP_RUBLE:
+                    if (!buffer.hasNext()) {
+                        throw new RuntimeException("Неверный формат выражения");
+                    }
+                    Lexeme rubleValue = buffer.next();
+                    if (rubleValue.type != LexemeType.NUMBER) {
+                        throw new RuntimeException("Неверный формат выражения");
+                    }
+                    left = toDollars(left) + toDollars(toRubles(Double.parseDouble(rubleValue.value)));
+                    break;
+                case EOF:
+                case OP_PLUS:
+                case OP_MINUS:
+                case RIGHT_BRACKET:
+                    buffer.back();
+                    return left;
+                default:
+                    throw new RuntimeException("Неверный формат выражения");
+            }
+        }
+        return left;
+    }
+
+
+    private static double evaluateExpression(LexemeBuffer buffer) {
+        double result = evaluateAddSub(buffer);
+        while (buffer.hasNext()) {
+            Lexeme lexeme = buffer.next();
+            switch (lexeme.type) {
+                case OP_PLUS:
+                    result += evaluateAddSub(buffer);
+                    break;
+                case OP_MINUS:
+                    result -= evaluateAddSub(buffer);
+                    break;
+                case OP_DOLLARS:
+                    result = toDollars(result);
+                    break;
+                case OP_RUBLE:
+                    result = toRubles(result);
+                    break;
+                case RIGHT_BRACKET:
+                    return result;
+                case EOF:
+                    buffer.back();
+                    break;
+                default:
+                    throw new RuntimeException("Неверный формат выражения");
+            }
+        }
+        return result;
+    }
+
+    private static double evaluateUnary(LexemeBuffer buffer) {
+        if (buffer.hasNext()) {
+            Lexeme lexeme = buffer.next();
+            switch (lexeme.type) {
+                case OP_PLUS:
+                    return evaluateUnary(buffer);
+                case OP_MINUS:
+                    return -evaluateUnary(buffer);
+                case NUMBER:
+                    return Double.parseDouble(lexeme.value);
+                case LEFT_BRACKET:
+                    double result = evaluateExpression(buffer);
+                    if (!buffer.hasNext() || buffer.next().type != LexemeType.RIGHT_BRACKET) {
+                        throw new RuntimeException("Неверный формат выражения: пропущена закрывающая скобка");
+                    }
+                    return result;
+                case OP_DOLLARS:
+                    /*if (!buffer.hasNext() || buffer.next().type != LexemeType.LEFT_BRACKET) {
+                        throw new RuntimeException("Неверный формат выражения: пропущена открывающая скобка после toDollars");
+                    }*/
+                    double dollars = evaluateExpression(buffer);
+                 /*   if (!buffer.hasNext() || buffer.next().type != LexemeType.RIGHT_BRACKET) {
+                        throw new RuntimeException("Неверный формат выражения: пропущена закрывающая скобка после toDollars");
+                    }*/
+                    return Count.toDollars(dollars);
+                case OP_RUBLE:
+                    /*if (!buffer.hasNext() || buffer.next().type != LexemeType.LEFT_BRACKET) {
+                        throw new RuntimeException("Неверный формат выражения: пропущена открывающая скобка после toRubles");
+                    }*/
+                    double rubles = evaluateExpression(buffer);
+                   /* if (!buffer.hasNext() || buffer.next().type != LexemeType.RIGHT_BRACKET) {
+                        throw new RuntimeException("Неверный формат выражения: пропущена закрывающая скобка после toRubles");
+                    }*/
+                    return Count.toRubles(rubles);
+                default:
+                    throw new RuntimeException("Неверный формат выражения");
+            }
+        }
+        throw new RuntimeException("Неверный формат выражения");
+    }
+    public static double toDollars(double rubles) {
+        return rubles / 75.0;
+    }
+
+    public static double toRubles(double dollars) {
+        return dollars * 75.0;
+    }
+
 }
 
